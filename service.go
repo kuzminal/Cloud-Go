@@ -10,6 +10,8 @@ import (
 	"net/http"
 )
 
+var logger TransactionLogger
+
 func keyValuePutHandler(w http.ResponseWriter, r *http.Request) {
 	// keyValuePutHandler ожидает получить PUT-запрос с
 	//ресурсом "/v1/key/{key}".
@@ -34,6 +36,7 @@ func keyValuePutHandler(w http.ResponseWriter, r *http.Request) {
 			http.StatusInternalServerError)
 		return
 	}
+	logger.WritePut(key, string(value))
 	w.WriteHeader(http.StatusCreated) // Все хорошо! Вернуть StatusCreated
 }
 
@@ -64,6 +67,7 @@ func keyValueDeleteHandler(w http.ResponseWriter, r *http.Request) {
 			http.StatusInternalServerError)
 		return
 	}
+	logger.WriteDelete(key)
 	w.WriteHeader(http.StatusNoContent) // Все хорошо! Вернуть StatusNoContent
 }
 
@@ -84,7 +88,35 @@ func keyValueGetAllKeysHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write(j) // Записать значение в ответ
 }
 
+func initializeTransactionLog() error {
+	var err error
+	logger, err = NewFileTransactionLogger("transaction.log")
+	if err != nil {
+		return fmt.Errorf("failed to create event logger: %w", err)
+	}
+	events, errors := logger.ReadEvents()
+	e, ok := Event{}, true
+	for ok && err == nil {
+		select {
+		case err, ok = <-errors: // Получает ошибки
+		case e, ok = <-events:
+			switch e.EventType {
+			case EventDelete: // Получено событие DELETE!
+				err = Delete(e.Key)
+			case EventPut: // Получено событие PUT!
+				err = Put(e.Key, e.Value)
+			}
+		}
+	}
+	logger.Run()
+	return err
+}
+
 func main() {
+	err := initializeTransactionLog()
+	if err != nil {
+		return
+	}
 	r := mux.NewRouter()
 	// Зарегистрировать keyValuePutHandler как обработчик HTTP-запросов PUT,
 	//в которых указан путь "/v1/{key}"
