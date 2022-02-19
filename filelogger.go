@@ -31,6 +31,13 @@ func NewFileTransactionLogger(filename string) (TransactionLogger, error) {
 	return &FileTransactionLogger{file: file}, nil
 }
 
+func (l *FileTransactionLogger) Close() {
+	err := l.file.Close()
+	if err != nil {
+		return
+	}
+}
+
 func (l *FileTransactionLogger) Run() {
 	events := make(chan Event, 16) // Создать канал событий
 	l.events = events

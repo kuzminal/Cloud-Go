@@ -109,6 +109,7 @@ func initializeTransactionLog() error {
 		}
 	}
 	logger.Run()
+	defer logger.Close()
 	return err
 }
 
