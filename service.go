@@ -90,7 +90,13 @@ func keyValueGetAllKeysHandler(w http.ResponseWriter, r *http.Request) {
 
 func initializeTransactionLog() error {
 	var err error
-	logger, err = NewFileTransactionLogger("transaction.log")
+	//logger, err = NewFileTransactionLogger("transaction.log")
+	logger, err = NewPostgresTransactionLogger(PostgresDBParams{
+		host:     "localhost",
+		dbName:   "kvs",
+		user:     "user",
+		password: "password",
+	})
 	if err != nil {
 		return fmt.Errorf("failed to create event logger: %w", err)
 	}
