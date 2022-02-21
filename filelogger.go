@@ -3,20 +3,25 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"net/url"
 	"os"
+	"sync"
 )
 
 type FileTransactionLogger struct {
-	events       chan<- Event // Канал только для записи; для передачи событий
-	errors       <-chan error // Канал только для чтения; для приема ошибок
-	lastSequence uint64       // Последний использованный порядковый номер
-	file         *os.File     // Местоположение файла журнала
+	events       chan<- Event    // Канал только для записи; для передачи событий
+	errors       <-chan error    // Канал только для чтения; для приема ошибок
+	lastSequence uint64          // Последний использованный порядковый номер
+	file         *os.File        // Местоположение файла журнала
+	wg           *sync.WaitGroup // для того, чтобы не потерять события
 }
 
 func (l *FileTransactionLogger) WritePut(key, value string) {
-	l.events <- Event{EventType: EventPut, Key: key, Value: value}
+	l.wg.Add(1)
+	l.events <- Event{EventType: EventPut, Key: key, Value: url.QueryEscape(value)}
 }
 func (l *FileTransactionLogger) WriteDelete(key string) {
+	l.wg.Add(1)
 	l.events <- Event{EventType: EventDelete, Key: key}
 }
 func (l *FileTransactionLogger) Err() <-chan error {
@@ -28,14 +33,21 @@ func NewFileTransactionLogger(filename string) (TransactionLogger, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cannot open transaction log file: %w", err)
 	}
-	return &FileTransactionLogger{file: file}, nil
+	return &FileTransactionLogger{file: file, wg: &sync.WaitGroup{}}, nil
 }
 
-func (l *FileTransactionLogger) Close() {
-	err := l.file.Close()
-	if err != nil {
-		return
+func (l *FileTransactionLogger) Wait() {
+	l.wg.Wait()
+}
+
+func (l *FileTransactionLogger) Close() error {
+	l.wg.Wait()
+
+	if l.events != nil {
+		close(l.events) // Terminates Run loop and goroutine
 	}
+
+	return l.file.Close()
 }
 
 func (l *FileTransactionLogger) Run() {
@@ -48,7 +60,7 @@ func (l *FileTransactionLogger) Run() {
 			l.lastSequence++ // Увеличить порядковый номер
 			_, err := fmt.Fprintf(l.file,
 				"%d\t%d\t%s\t%s\n",
-				l.lastSequence, e.EventType, e.Key, e.Value) // Записать событие в журнал
+				l.lastSequence, e.EventType, e.Key, []byte(e.Value)) // Записать событие в журнал
 			if err != nil {
 				errors <- err
 				return
@@ -78,6 +90,13 @@ func (l *FileTransactionLogger) ReadEvents() (<-chan Event, <-chan error) {
 				outError <- fmt.Errorf("transaction numbers out of sequence")
 				return
 			}
+			uv, err := url.QueryUnescape(e.Value)
+			if err != nil {
+				outError <- fmt.Errorf("value decoding failure: %w", err)
+				return
+			}
+
+			e.Value = uv
 			l.lastSequence = e.Sequence // Запомнить последний использованный // порядковый номер
 			outEvent <- e               // Отправить событие along
 		}

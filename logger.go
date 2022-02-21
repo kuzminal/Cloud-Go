@@ -14,7 +14,8 @@ type TransactionLogger interface {
 	Err() <-chan error
 	ReadEvents() (<-chan Event, <-chan error)
 	Run()
-	Close()
+	Wait()
+	Close() error
 }
 
 type Event struct {
